@@ -1,85 +1,102 @@
-# train a encoder-decoder using the song as both input and output,
-# use the encoder part only and create encoded representations of the music
-# Assume that the encoded representation is a good enough representation of the music
-
-
-# base autoencoder code
+import os
+import glob
+from PIL import Image
+from sklearn.model_selection import train_test_split
 import tensorflow as tf
-from tensorflow.keras.layers import Input, Dense
-from tensorflow.keras.models import Model
-import numpy as np
-
-# Verify GPU availability
-print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
-
-# Define the size of the encoding dimension
-encoding_dim = 32
-
-# Input placeholder
-input_data = Input(shape=(784,))  # Example for MNIST dataset
-
-# Encoder network
-encoded = Dense(encoding_dim, activation='relu')(input_data)
-
-# Decoder network
-decoded = Dense(784, activation='sigmoid')(encoded)
-
-# Autoencoder model
-autoencoder = Model(input_data, decoded)
-
-# Encoder model
-encoder = Model(input_data, encoded)
-
-# Decoder model
-encoded_input = Input(shape=(encoding_dim,))
-decoder_layer = autoencoder.layers[-1]
-decoder = Model(encoded_input, decoder_layer(encoded_input))
-
-# Compile the autoencoder
-autoencoder.compile(optimizer='adam', loss='binary_crossentropy')
-
-# Load dataset (e.g., MNIST)
-(x_train, _), (x_test, _) = tf.keras.datasets.mnist.load_data()
-x_train = x_train.astype('float32') / 255.
-x_test = x_test.astype('float32') / 255.
-x_train = x_train.reshape((len(x_train), np.prod(x_train.shape[1:])))
-x_test = x_test.reshape((len(x_test), np.prod(x_test.shape[1:])))
-
-# Enable memory growth for GPU (optional, helps prevent CUDA_OUT_OF_MEMORY error)
-physical_devices = tf.config.experimental.list_physical_devices('GPU')
-for device in physical_devices:
-    tf.config.experimental.set_memory_growth(device, True)
-
-# Train the autoencoder
-autoencoder.fit(x_train, x_train,
-                epochs=50,
-                batch_size=256,
-                shuffle=True,
-                validation_data=(x_test, x_test))
-
-# Encode and decode some digits
-encoded_imgs = encoder.predict(x_test)
-decoded_imgs = decoder.predict(encoded_imgs)
-
-# Display original and reconstructed images
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import tensorflow as tf
 
-n = 10  # Number of digits to display
+from sklearn.metrics import accuracy_score, precision_score, recall_score
+from sklearn.model_selection import train_test_split
+from tensorflow.keras import layers, losses
+from tensorflow.keras.datasets import fashion_mnist
+from tensorflow.keras.models import Model
+
+class Autoencoder(Model):
+  def __init__(self, latent_dim, shape):
+    super(Autoencoder, self).__init__()
+    self.latent_dim = latent_dim
+    self.shape = shape
+    self.encoder = tf.keras.Sequential([
+      layers.Flatten(),
+      layers.Dense(latent_dim, activation='relu'),
+    ])
+    self.decoder = tf.keras.Sequential([
+      layers.Dense(tf.math.reduce_prod(shape).numpy(), activation='sigmoid'),
+      layers.Reshape(shape)
+    ])
+
+  def call(self, x):
+    encoded = self.encoder(x)
+    decoded = self.decoder(encoded)
+    return decoded
+
+def load_images_from_directory(directory_path, target_size=(128, 128)):
+    image_files = glob.glob(os.path.join(directory_path, '**', '*.png'), recursive=True)
+    images = []
+    
+    for image_file in image_files:
+        image = Image.open(image_file).convert('RGB')  # Convert to RGB
+        #image = image.resize() Could be used later for better data
+        image_array = np.array(image)  # Convert to numpy array
+        images.append(image_array)
+    
+    images = np.array(images)
+    return images
+
+# Set the directory path and target size
+directory_path = './Data/images_original'
+target_size = (432,288)
+
+# Load and preprocess the images
+images = load_images_from_directory(directory_path, target_size)
+images = images / 255.0  # Normalize pixel values to [0, 1]
+
+
+
+# Split the data into training, validation, and test sets
+train_images, test_images = train_test_split(images, test_size=0.2, random_state=42)
+train_images, val_images = train_test_split(train_images, test_size=0.2, random_state=42)
+
+
+# Now train_images, val_images, and test_images are ready for training
+print(f'Training images shape: {train_images.shape}')
+print(f'Validation images shape: {val_images.shape}')
+print(f'Test images shape: {test_images.shape}')
+
+latent_dim = 64
+autoencoder = Autoencoder(latent_dim, (288,432,3))
+
+autoencoder.compile(optimizer='adam', loss=losses.MeanSquaredError())
+
+autoencoder.fit(train_images, train_images,
+                epochs=1,
+                shuffle=True,
+                validation_data=(test_images, test_images))
+
+
+encoded_imgs = autoencoder.encoder(test_images).numpy()
+decoded_imgs = autoencoder.decoder(encoded_imgs).numpy()
+
+n = 10
 plt.figure(figsize=(20, 4))
 for i in range(n):
-    # Display original
-    ax = plt.subplot(2, n, i + 1)
-    plt.imshow(x_test[i].reshape(28, 28))
-    plt.gray()
-    ax.axis('off')
+  # display original
+  ax = plt.subplot(2, n, i + 1)
+  plt.imshow(test_images[i])
+  plt.title("original")
+  plt.gray()
+  ax.get_xaxis().set_visible(False)
+  ax.get_yaxis().set_visible(False)
 
-    # Display reconstruction
-    ax = plt.subplot(2, n, i + 1 + n)
-    plt.imshow(decoded_imgs[i].reshape(28, 28))
-    plt.gray()
-    ax.axis('off')
+  # display reconstruction
+  ax = plt.subplot(2, n, i + 1 + n)
+  plt.imshow(decoded_imgs[i])
+  plt.title("reconstructed")
+  plt.gray()
+  ax.get_xaxis().set_visible(False)
+  ax.get_yaxis().set_visible(False)
 plt.show()
-
-
-
 
